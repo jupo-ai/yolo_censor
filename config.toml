@@ -1,0 +1,19 @@
+[general]
+device = "cuda"
+batch = 1
+mode = 0 # 0: mosaic, 1: black fill
+
+[[model]]
+path = ""
+label = []
+threshold = 0.75
+mask = "segm" # segm or bbox
+mask_offset = 4
+
+# [[model]]
+# path = ""
+# label = ["face"]
+# threshold = 0.75
+# mask = "bbox"
+# mask_offset = 0
+

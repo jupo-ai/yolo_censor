@@ -1,0 +1,6 @@
+imageio>=2.37.0
+questionary>=2.1.0
+toml>=0.10.2
+torch
+torchvision
+ultralytics>=8.3.91
