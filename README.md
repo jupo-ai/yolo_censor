@@ -1,7 +1,15 @@
 # YOLO-CENSOR
 
 ## インストール
-1. 仮想環境作成、有効化
+1. リポジトリクローン
+   ```
+   git clone https://github.com/jupo-ai/yolo_censor.git
+   ```
+
+2. 仮想環境作成、有効化
+   ```
+   cd yolo_censor
+   ```
    ```
    python -m venv venv
    ```
@@ -9,14 +17,14 @@
    .\venv\scripts\activate
    ```
 
-2. cudaを使用する場合はtorch, torchvisionをインストール  
+3. cudaを使用する場合はtorch, torchvisionをインストール  
    python3.12, cuda126でテストしていますが、他のバージョンでもだいたい動くと思います  
    cpuでも動作しますが、だいぶ遅いです
    ```
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
    ```
 
-3. 他依存関係インストール
+4. 他依存関係インストール
    ```
    pip install -r requirements.txt
    ```
