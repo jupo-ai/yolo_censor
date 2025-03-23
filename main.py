@@ -22,14 +22,20 @@ import imageio
 class GeneralSetting:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     batch: int = 1
-    overwrite: bool = False
-    mode: int = 0 # 0: mosaic, 1: black fill
+    mode: int = 0 # 0: mosaic, 1: black fill, 2: image
+    mosaic_size: int = 0 # 0: auto, 1~: specific size
+    mask_image: str = ""
     
     def __post_init__(self):
         if self.device == "cuda":
             if not torch.cuda.is_available():
                 print("cuda使用不可のためcpuで処理します")
                 self.device = "cpu"
+        
+        if (self.mode == 2) and (not self.mask_image):
+            print("mask_imageが設定されていません。モザイクモードに変更します")
+            self.mode = 0
+            
 
 @dataclass
 class ModelInfoSetting:
@@ -123,13 +129,16 @@ def create_batches(files: list[Path], size):
 # ===============================================
 # 検閲処理
 # ===============================================
-def apply_mosaic(image: np.ndarray, region: np.ndarray) -> np.ndarray:
+def apply_mosaic(image: np.ndarray, region: np.ndarray, config: RootConfig) -> np.ndarray:
     """
     マスク領域にモザイク処理を適用する。
-    モザイクサイズはpixivに合わせて max(4, long/100) とする
+    モザイクサイズはオートの場合pixivより max(4, long/100) とする
     """
     height, width = image.shape[:2]
-    mosaic_size = math.ceil(max(4, max(height, width) / 100))
+    if config.general.mosaic_size == 0:
+        mosaic_size = math.ceil(max(4, max(height, width) / 100))
+    else:
+        mosaic_size = config.general.mosaic_size
     masked_image = image.copy()
     mask_indices = region > 0
     
@@ -159,6 +168,60 @@ def apply_black_fill(image: np.ndarray, region: np.ndarray) -> np.ndarray:
     masked_image[mask_indices] = [0, 0, 0]
     return masked_image
 
+
+def trim_transparent(image: np.ndarray):
+    image_data = np.array(image)
+
+    alpha = image_data[:, :, 3]
+    non_transparent = alpha > 0
+
+    if np.any(non_transparent):
+        rows = np.any(non_transparent, axis=1)
+        cols = np.any(non_transparent, axis=0)
+
+        y_min, y_max = np.where(rows)[0][[0, -1]]
+        x_min, x_max = np.where(cols)[0][[0, -1]]
+
+        return image.crop((x_min, y_min, x_max+1, y_max+1))
+    else:
+        return image
+
+
+def apply_mask_image(image: np.ndarray, region: np.ndarray, config: RootConfig) -> np.ndarray:
+    mask_image_path = config.general.mask_image
+    mask_image = Image.open(mask_image_path).convert("RGBA")
+
+    # region の bbox を取得
+    y_ids, x_ids = np.where(region > 0)
+    if len(x_ids) == 0 or len(y_ids) == 0:
+        return image
+    
+    x_min, x_max = x_ids.min(), x_ids.max()
+    y_min, y_max = y_ids.min(), y_ids.max()
+    region_center_x = (x_min + x_max) // 2
+    region_center_y = (y_min + y_max) // 2
+    region_width = x_max - x_min
+    region_height = y_max - y_min
+    
+    mask_image = trim_transparent(mask_image) # mask_imageの透明部分を最小限になるようトリム
+    resize_scale = region_width / mask_image.size[0]
+    resize_width = int(mask_image.size[0] * resize_scale)
+    resize_height = int(mask_image.size[1] * resize_scale)
+    mask_resized = mask_image.resize((resize_width, resize_height), Image.LANCZOS)
+
+    # マスク画像の貼り付け位置を計算(中心を合わせる)
+    mask_w, mask_h = mask_resized.size
+    paste_x = region_center_x - mask_w // 2
+    paste_y = region_center_y - mask_h // 2
+    
+    # 画像にマスクを合成
+    image_pil = Image.fromarray(image)
+    image_pil.paste(mask_resized, (paste_x, paste_y), mask_resized)
+
+    image = np.array(image_pil)
+    return image
+
+    
 
 
 # ===============================================
@@ -196,6 +259,10 @@ def predict_regions(input: Union[list[Path], np.ndarray], config: RootConfig):
             for i, (box, cls, conf) in enumerate(zip(boxes, clses, confs)):
                 class_name = model_info.model.names[int(cls)]
                 if class_name in model_info.label and conf >= model_info.threshold:
+                    # 領域の取得方法
+                    if config.general.mode == 2: # if mode is 'mask image' then, mask type is bbox
+                        model_info.mask = "bbox"
+                                        
                     if masks is not None and i < len(masks) and model_info.mask == "segm":
                         contour = masks.xy[i].astype(np.int32).reshape(-1, 1, 2)
                         region = np.zeros(result.orig_shape, dtype=np.uint8)
@@ -238,9 +305,8 @@ def process_images(images: list[Path], config: RootConfig):
         for image_path, regions in regions_map.items():
             bar.set_description(image_path)
 
-            pil_image = Image.open(image_path).convert("RGB")
+            pil_image = Image.open(image_path).convert("RGBA")
             image = np.array(pil_image)
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
             should_save = False
             for region in regions:
@@ -248,9 +314,11 @@ def process_images(images: list[Path], config: RootConfig):
                     should_save = True
                     
                     if config.general.mode == 0:
-                        image = apply_mosaic(image, region)
+                        image = apply_mosaic(image, region, config)
                     elif config.general.mode == 1:
                         image = apply_black_fill(image, region)
+                    elif config.general.mode == 2:
+                        image = apply_mask_image(image, region, config)
             
             if should_save:
                 save_image(image, image_path)
@@ -264,9 +332,8 @@ def save_image(image: np.ndarray, orig_path: str):
     output_dir = Path(orig_path).parent / "censored"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / Path(orig_path).name
-
-    output_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    pil_output = Image.fromarray(output_image)
+    
+    pil_output = Image.fromarray(image)
     
     pil_output.save(str(output_path))
 
@@ -364,7 +431,6 @@ def get_video_frames(file: Path):
         print(f"サポートされていない形式: {file}")
         return None, None, None
                 
-
 
 def main(args):
     config = load_config()
