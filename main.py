@@ -335,7 +335,11 @@ def save_image(image: np.ndarray, orig_path: str):
     
     pil_output = Image.fromarray(image)
     
-    pil_output.save(str(output_path))
+    try:
+        pil_output.save(str(output_path))
+    except:
+        pil_output = pil_output.convert("RGB")
+        pil_output.save(str(output_path))
 
 
 
