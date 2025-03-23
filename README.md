@@ -39,7 +39,7 @@
    - **model**  
      このmodelセクションは複数設定できます。
      - path: モデルへのパス
-     - label: 検出するラベル(リストで複数指定可能)
+     - label: 検出するラベル(リストで複数指定可能。例: label = ["face", "eyes"])
      - threshold: 検出する閾値
      - mask: マスクのモード(segm: セグメント, bbox: ボックス)
      - mask_offset: マスクをoffset分だけ拡大する
